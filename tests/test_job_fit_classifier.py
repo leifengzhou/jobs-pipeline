@@ -2,7 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from jobs_pipeline import FitDecision, discover_job_files, parse_llm_response, process_job_file
+from jobs_pipeline import (
+    FitDecision,
+    discover_job_files,
+    load_env_file,
+    parse_llm_response,
+    process_job_file,
+)
 
 
 class FakeClassifier:
@@ -67,6 +73,19 @@ class JobFitClassifierTests(unittest.TestCase):
             self.assertEqual(destination.parent.name, "02-good-fit")
             self.assertFalse(job_path.exists())
             self.assertTrue(destination.exists())
+
+    def test_load_env_file_reads_key_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / "deepseek.env"
+            env_path.write_text(
+                "# comment\nDEEPSEEK_API_KEY=test-key\nDEEPSEEK_MODEL=deepseek-v4-flash\n",
+                encoding="utf-8",
+            )
+
+            values = load_env_file(env_path)
+
+            self.assertEqual(values["DEEPSEEK_API_KEY"], "test-key")
+            self.assertEqual(values["DEEPSEEK_MODEL"], "deepseek-v4-flash")
 
 
 if __name__ == "__main__":

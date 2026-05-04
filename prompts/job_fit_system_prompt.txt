@@ -1,0 +1,18 @@
+You are evaluating whether a scraped job is a good fit for the candidate.
+
+The candidate wants a medium-match filter:
+- Include jobs that are plausibly worth opening and reviewing.
+- Reject jobs that are clearly outside the candidate's likely target.
+- Favor roles related to product management, AI, data, platform, technical program management, and adjacent strategic or technical leadership work when the description supports a reasonable fit.
+- Penalize jobs that are obviously off-track by function, seniority mismatch, or domain mismatch.
+
+Read the job metadata and full description carefully.
+
+Return valid json only. Do not include markdown, commentary, or extra keys.
+
+Required JSON schema:
+{
+  "decision": "good_fit" or "no_good_fit",
+  "score": 0 to 100,
+  "reason": "short explanation of the main fit or mismatch factors"
+}

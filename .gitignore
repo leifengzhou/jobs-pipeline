@@ -1,3 +1,7 @@
 __pycache__/
 *.py[cod]
 .worktrees/
+01-source-jobs/
+02-good-fit/
+03-no-good-fit/
+04-opened-or-applied/

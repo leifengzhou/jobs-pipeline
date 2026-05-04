@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -176,6 +178,20 @@ class JobFitClassifierTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(classifier.calls[0][2], "deepseek-v4-pro")
+
+    def test_script_wrapper_can_render_help(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+
+        result = subprocess.run(
+            [sys.executable, "scripts/classify_jobs.py", "--help"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("Classify scraped jobs with DeepSeek.", result.stdout)
 
 
 if __name__ == "__main__":

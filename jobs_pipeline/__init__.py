@@ -193,8 +193,8 @@ def main(argv: Sequence[str] | None = None, client: ClassifierClient | None = No
     parser.add_argument("--no-good-fit-dir", default="03-no-good-fit")
     parser.add_argument("--prompt-file", default="prompts/job_fit_system_prompt.txt")
     parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
-    parser.add_argument("--api-url", default=DEFAULT_API_URL)
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--api-url", default=None)
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     try:
@@ -205,14 +205,16 @@ def main(argv: Sequence[str] | None = None, client: ClassifierClient | None = No
         print(f"Startup error: {exc}", file=sys.stderr)
         return 1
 
-    batch_client = client or DeepSeekClient(api_key=api_key, api_url=args.api_url)
+    model = args.model or env_values.get("DEEPSEEK_MODEL", DEFAULT_MODEL)
+    api_url = args.api_url or env_values.get("DEEPSEEK_API_URL", DEFAULT_API_URL)
+    batch_client = client or DeepSeekClient(api_key=api_key, api_url=api_url)
     processed, good_fit, no_good_fit, errors = run_batch(
         source_dir=Path(args.source_dir),
         good_fit_dir=Path(args.good_fit_dir),
         no_good_fit_dir=Path(args.no_good_fit_dir),
         system_prompt=system_prompt,
         client=batch_client,
-        model=args.model,
+        model=model,
         limit=args.limit,
     )
     print(

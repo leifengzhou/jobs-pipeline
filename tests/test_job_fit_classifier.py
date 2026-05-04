@@ -6,6 +6,7 @@ from jobs_pipeline import (
     FitDecision,
     discover_job_files,
     load_env_file,
+    main,
     parse_llm_response,
     process_job_file,
 )
@@ -14,8 +15,10 @@ from jobs_pipeline import (
 class FakeClassifier:
     def __init__(self, decision: FitDecision) -> None:
         self.decision = decision
+        self.calls: list[tuple[str, str, str]] = []
 
     def classify(self, system_prompt: str, user_message: str, model: str) -> FitDecision:
+        self.calls.append((system_prompt, user_message, model))
         return self.decision
 
 
@@ -86,6 +89,93 @@ class JobFitClassifierTests(unittest.TestCase):
 
             self.assertEqual(values["DEEPSEEK_API_KEY"], "test-key")
             self.assertEqual(values["DEEPSEEK_MODEL"], "deepseek-v4-flash")
+
+    def test_cli_processes_a_single_file_with_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "01-source-jobs"
+            good_fit_dir = root / "02-good-fit"
+            no_good_fit_dir = root / "03-no-good-fit"
+            prompt_file = root / "prompt.txt"
+            env_file = root / "deepseek.env"
+
+            source_dir.mkdir()
+            good_fit_dir.mkdir()
+            no_good_fit_dir.mkdir()
+            prompt_file.write_text("Return json.", encoding="utf-8")
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            (source_dir / "b.json").write_text(
+                '{"title":"B","company":"Acme","location":"Remote","description":"Desc B"}',
+                encoding="utf-8",
+            )
+            (source_dir / "a.json").write_text(
+                '{"title":"A","company":"Acme","location":"Remote","description":"Desc A"}',
+                encoding="utf-8",
+            )
+
+            exit_code = main(
+                [
+                    "--limit",
+                    "1",
+                    "--source-dir",
+                    str(source_dir),
+                    "--good-fit-dir",
+                    str(good_fit_dir),
+                    "--no-good-fit-dir",
+                    str(no_good_fit_dir),
+                    "--prompt-file",
+                    str(prompt_file),
+                    "--env-file",
+                    str(env_file),
+                ],
+                client=FakeClassifier(FitDecision("good_fit", 93, "Worth reviewing")),
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue((good_fit_dir / "a.json").exists())
+            self.assertTrue((source_dir / "b.json").exists())
+
+    def test_cli_uses_model_from_env_when_flag_is_omitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "01-source-jobs"
+            good_fit_dir = root / "02-good-fit"
+            no_good_fit_dir = root / "03-no-good-fit"
+            prompt_file = root / "prompt.txt"
+            env_file = root / "deepseek.env"
+
+            source_dir.mkdir()
+            good_fit_dir.mkdir()
+            no_good_fit_dir.mkdir()
+            prompt_file.write_text("Return json.", encoding="utf-8")
+            env_file.write_text(
+                "DEEPSEEK_API_KEY=test-key\nDEEPSEEK_MODEL=deepseek-v4-pro\n",
+                encoding="utf-8",
+            )
+            (source_dir / "job.json").write_text(
+                '{"title":"A","company":"Acme","location":"Remote","description":"Desc A"}',
+                encoding="utf-8",
+            )
+
+            classifier = FakeClassifier(FitDecision("good_fit", 93, "Worth reviewing"))
+            exit_code = main(
+                [
+                    "--source-dir",
+                    str(source_dir),
+                    "--good-fit-dir",
+                    str(good_fit_dir),
+                    "--no-good-fit-dir",
+                    str(no_good_fit_dir),
+                    "--prompt-file",
+                    str(prompt_file),
+                    "--env-file",
+                    str(env_file),
+                ],
+                client=classifier,
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(classifier.calls[0][2], "deepseek-v4-pro")
 
 
 if __name__ == "__main__":

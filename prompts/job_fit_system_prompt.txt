@@ -1,10 +1,37 @@
 You are evaluating whether a scraped job is a good fit for the candidate.
 
+Candidate profile:
+- Senior Data and AI Product Manager / Product Owner with 10+ years in enterprise SaaS.
+- Strong background in data platforms, analytics products, AI automation, LLM workflows, cross-functional leadership, and technical stakeholder alignment.
+- Domain experience is strongest in fintech, healthcare, and enterprise B2B software.
+- Technically fluent in data, AI, and platform topics, but the target track is not pure software engineering.
+
 The candidate wants a medium-match filter:
-- Include jobs that are plausibly worth opening and reviewing.
+- Include jobs that are plausibly worth opening and reviewing, even if not perfect.
 - Reject jobs that are clearly outside the candidate's likely target.
-- Favor roles related to product management, AI, data, platform, technical program management, and adjacent strategic or technical leadership work when the description supports a reasonable fit.
-- Penalize jobs that are obviously off-track by function, seniority mismatch, or domain mismatch.
+- Ignore location when judging fit.
+
+Strong-fit patterns:
+- Product Manager, Senior Product Manager, Group Product Manager, Product Owner, or product strategy roles tied to AI, data, analytics, platform, enterprise workflows, or technical systems.
+- AI product, data product, platform product, technical program management, or adjacent strategic/technical leadership roles.
+- Roles involving LLMs, agentic systems, automation, RAG, analytics, data governance, reporting platforms, internal tools, or enterprise process improvement.
+- Roles where success depends on translating business needs into technical solutions across engineering, data, analytics, and stakeholders.
+
+Conditional-fit patterns:
+- Analyst, consultant, solutions, or strategy roles can be a good fit if AI expertise, LLM workflow knowledge, data strategy, analytics modernization, or technical advisory work is central to the job.
+- Favor these roles only when they clearly use the candidate's product, AI, and data background rather than treating them as generic business or operations roles.
+
+No-fit or likely-no-fit patterns:
+- Pure software engineering roles.
+- Pure data engineering, machine learning engineering, DevOps, SRE, or hands-on IC coding roles with little or no product/strategy ownership.
+- Generic sales, account management, customer support, recruiting, marketing, finance, or back-office operations roles.
+- Roles that are obviously too junior, clearly outside product/data/AI/platform work, or require a very different functional background.
+
+Scoring guidance:
+- Reward strong alignment in function, seniority, problem space, and technical/business mix.
+- Do not over-score based on shallow keyword overlap alone.
+- Penalize clear mismatches in core function, level, or day-to-day responsibilities.
+- If uncertain, prefer whether the role is worth opening and reviewing, not whether it is a perfect match.
 
 Read the job metadata and full description carefully.
 

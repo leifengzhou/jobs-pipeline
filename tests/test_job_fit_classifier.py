@@ -221,6 +221,102 @@ class JobFitClassifierTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(classifier.calls[0][2], "deepseek-v4-pro")
 
+    def test_main_moves_opened_or_applied_duplicates_without_calling_llm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "01-source-jobs"
+            good_fit_dir = root / "02-good-fit"
+            no_good_fit_dir = root / "03-no-good-fit"
+            opened_or_applied_dir = root / "04-opened-or-applied"
+            duplicates_dir = root / "05-duplicates"
+            prompt_file = root / "prompt.txt"
+            env_file = root / "deepseek.env"
+
+            source_dir.mkdir()
+            good_fit_dir.mkdir()
+            no_good_fit_dir.mkdir()
+            opened_or_applied_dir.mkdir()
+            prompt_file.write_text("Return json.", encoding="utf-8")
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            (opened_or_applied_dir / "Acme_Product-Manager_111.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            duplicate_job = source_dir / "Acme_Product-Manager_222.json"
+            duplicate_job.write_text(
+                '{"title":"Product Manager","company":"Acme","location":"Remote","description":"Desc"}',
+                encoding="utf-8",
+            )
+
+            with temporary_cwd(root):
+                exit_code = main(
+                    [
+                        "--source-dir",
+                        str(source_dir),
+                        "--good-fit-dir",
+                        str(good_fit_dir),
+                        "--no-good-fit-dir",
+                        str(no_good_fit_dir),
+                        "--prompt-file",
+                        str(prompt_file),
+                        "--env-file",
+                        str(env_file),
+                    ],
+                    client=RaisingClassifier(AssertionError("LLM should not be called")),
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertFalse(duplicate_job.exists())
+            self.assertTrue((duplicates_dir / "Acme_Product-Manager_222.json").exists())
+            self.assertTrue((opened_or_applied_dir / "Acme_Product-Manager_111.json").exists())
+
+    def test_main_moves_no_good_fit_duplicates_without_calling_llm(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "01-source-jobs"
+            good_fit_dir = root / "02-good-fit"
+            no_good_fit_dir = root / "03-no-good-fit"
+            duplicates_dir = root / "05-duplicates"
+            prompt_file = root / "prompt.txt"
+            env_file = root / "deepseek.env"
+
+            source_dir.mkdir()
+            good_fit_dir.mkdir()
+            no_good_fit_dir.mkdir()
+            prompt_file.write_text("Return json.", encoding="utf-8")
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            (no_good_fit_dir / "Acme_Product-Manager_111.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            duplicate_job = source_dir / "Acme_Product-Manager_222.json"
+            duplicate_job.write_text(
+                '{"title":"Product Manager","company":"Acme","location":"Remote","description":"Desc"}',
+                encoding="utf-8",
+            )
+
+            with temporary_cwd(root):
+                exit_code = main(
+                    [
+                        "--source-dir",
+                        str(source_dir),
+                        "--good-fit-dir",
+                        str(good_fit_dir),
+                        "--no-good-fit-dir",
+                        str(no_good_fit_dir),
+                        "--prompt-file",
+                        str(prompt_file),
+                        "--env-file",
+                        str(env_file),
+                    ],
+                    client=RaisingClassifier(AssertionError("LLM should not be called")),
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertFalse(duplicate_job.exists())
+            self.assertTrue((duplicates_dir / "Acme_Product-Manager_222.json").exists())
+            self.assertTrue((no_good_fit_dir / "Acme_Product-Manager_111.json").exists())
+
     def test_main_creates_default_persistent_log_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

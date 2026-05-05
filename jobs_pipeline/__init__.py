@@ -139,6 +139,32 @@ def discover_job_files(source_dir: Path, limit: int | None = None) -> list[Path]
     return job_files[:limit]
 
 
+def derive_company_role_key(job_path: Path) -> str:
+    stem = job_path.stem
+    prefix, separator, _ = stem.rpartition("_")
+    return prefix if separator else stem
+
+
+def collect_company_role_keys(source_dir: Path) -> set[str]:
+    if not source_dir.exists():
+        return set()
+    return {derive_company_role_key(path) for path in discover_job_files(source_dir)}
+
+
+def collect_duplicate_company_role_keys(*source_dirs: Path) -> set[str]:
+    duplicate_keys: set[str] = set()
+    for source_dir in source_dirs:
+        duplicate_keys.update(collect_company_role_keys(source_dir))
+    return duplicate_keys
+
+
+def move_duplicate_job_file(job_path: Path, duplicates_dir: Path) -> Path:
+    duplicates_dir.mkdir(parents=True, exist_ok=True)
+    destination_path = duplicates_dir / job_path.name
+    job_path.replace(destination_path)
+    return destination_path
+
+
 def collect_job_urls(job: dict[str, object]) -> list[str]:
     urls: list[str] = []
 
@@ -355,6 +381,8 @@ def run_batch(
     system_prompt: str,
     client: ClassifierClient,
     model: str,
+    opened_or_applied_dir: Path = Path("04-opened-or-applied"),
+    duplicates_dir: Path = Path("05-duplicates"),
     limit: int | None = None,
     error_artifact_dir: Path | None = DEFAULT_ERROR_ARTIFACT_DIR,
     logger: logging.Logger | None = None,
@@ -364,8 +392,24 @@ def run_batch(
     good_fit = 0
     no_good_fit = 0
     errors = 0
+    duplicate_company_role_keys = collect_duplicate_company_role_keys(
+        opened_or_applied_dir,
+        no_good_fit_dir,
+    )
 
     for job_path in discover_job_files(source_dir, limit=limit):
+        if derive_company_role_key(job_path) in duplicate_company_role_keys:
+            destination = move_duplicate_job_file(job_path, duplicates_dir)
+            processed += 1
+            batch_logger.info(
+                "%s -> %s (duplicate company+role match in %s or %s)",
+                job_path.name,
+                destination.parent.name,
+                opened_or_applied_dir.name,
+                no_good_fit_dir.name,
+            )
+            continue
+
         batch_logger.info("Processing %s with model=%s", job_path.name, model)
         try:
             destination = process_job_file(
@@ -450,6 +494,8 @@ def main(argv: Sequence[str] | None = None, client: ClassifierClient | None = No
     parser.add_argument("--source-dir", default="01-source-jobs")
     parser.add_argument("--good-fit-dir", default="02-good-fit")
     parser.add_argument("--no-good-fit-dir", default="03-no-good-fit")
+    parser.add_argument("--opened-or-applied-dir", default="04-opened-or-applied")
+    parser.add_argument("--duplicates-dir", default="05-duplicates")
     parser.add_argument("--prompt-file", default="prompts/job_fit_system_prompt.txt")
     parser.add_argument("--env-file", default=str(DEFAULT_ENV_FILE))
     parser.add_argument("--model", default=None)
@@ -484,6 +530,8 @@ def main(argv: Sequence[str] | None = None, client: ClassifierClient | None = No
         source_dir=Path(args.source_dir),
         good_fit_dir=Path(args.good_fit_dir),
         no_good_fit_dir=Path(args.no_good_fit_dir),
+        opened_or_applied_dir=Path(args.opened_or_applied_dir),
+        duplicates_dir=Path(args.duplicates_dir),
         system_prompt=system_prompt,
         client=batch_client,
         model=model,

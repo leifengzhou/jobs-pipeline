@@ -4,6 +4,7 @@ This repo classifies scraped job JSON files from `01-source-jobs` into:
 
 - `02-good-fit`
 - `03-no-good-fit`
+- `05-duplicates` when the same `<company>_<role>` filename prefix already exists in `04-opened-or-applied` or `03-no-good-fit`
 
 The classifier uses DeepSeek chat completions, writes the fit decision back into each JSON file, and then moves the file into the next stage directory.
 
@@ -45,6 +46,8 @@ Useful flags:
 - `--prompt-file PATH`: use a different system prompt
 - `--env-file PATH`: use a different env file
 - `--model MODEL`: override the default model (`deepseek-v4-flash`)
+- `--opened-or-applied-dir PATH`: override one of the directories checked for existing company-role matches (defaults to `04-opened-or-applied`)
+- `--duplicates-dir PATH`: override where filename-matched duplicates are moved (defaults to `05-duplicates`)
 - `--log-level LEVEL`: set the console/file log level (`INFO` by default)
 - `--log-file PATH`: override the default per-run log file location
 - `--error-artifact-dir PATH`: write per-failure diagnostic JSON artifacts (defaults to `.job-classifier-errors`)

@@ -5,3 +5,7 @@ __pycache__/
 02-good-fit/
 03-no-good-fit/
 04-opened-or-applied/
+05-duplicates/
+docs/
+logs/
+notes.md

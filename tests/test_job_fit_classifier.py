@@ -1,16 +1,29 @@
+import json
+import logging
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
+from urllib import request
 
 from jobs_pipeline import (
+    DeepSeekClient,
     FitDecision,
+    ModelResponseError,
+    collect_job_urls,
+    configure_logging,
     discover_job_files,
     load_env_file,
     main,
+    open_job_file,
+    open_jobs_main,
     parse_llm_response,
     process_job_file,
+    run_batch,
 )
 
 
@@ -22,6 +35,24 @@ class FakeClassifier:
     def classify(self, system_prompt: str, user_message: str, model: str) -> FitDecision:
         self.calls.append((system_prompt, user_message, model))
         return self.decision
+
+
+class RaisingClassifier:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+
+    def classify(self, system_prompt: str, user_message: str, model: str) -> FitDecision:
+        raise self.exc
+
+
+@contextmanager
+def temporary_cwd(path: Path):
+    previous = Path.cwd()
+    try:
+        os.chdir(path)
+        yield
+    finally:
+        os.chdir(previous)
 
 
 class JobFitClassifierTests(unittest.TestCase):
@@ -44,6 +75,15 @@ class JobFitClassifierTests(unittest.TestCase):
         self.assertEqual(result.decision, "good_fit")
         self.assertEqual(result.score, 88)
         self.assertEqual(result.reason, "Strong match")
+
+    def test_parse_llm_response_preserves_raw_text_on_json_error(self) -> None:
+        raw_response = '{"decision":"good_fit","score":88,"reason":"Missing quote}'
+
+        with self.assertRaises(ModelResponseError) as context:
+            parse_llm_response(raw_response)
+
+        self.assertEqual(context.exception.raw_response, raw_response)
+        self.assertIn("Malformed model response JSON", str(context.exception))
 
     def test_process_job_file_updates_metadata_and_moves_good_fit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -115,23 +155,24 @@ class JobFitClassifierTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            exit_code = main(
-                [
-                    "--limit",
-                    "1",
-                    "--source-dir",
-                    str(source_dir),
-                    "--good-fit-dir",
-                    str(good_fit_dir),
-                    "--no-good-fit-dir",
-                    str(no_good_fit_dir),
-                    "--prompt-file",
-                    str(prompt_file),
-                    "--env-file",
-                    str(env_file),
-                ],
-                client=FakeClassifier(FitDecision("good_fit", 93, "Worth reviewing")),
-            )
+            with temporary_cwd(root):
+                exit_code = main(
+                    [
+                        "--limit",
+                        "1",
+                        "--source-dir",
+                        str(source_dir),
+                        "--good-fit-dir",
+                        str(good_fit_dir),
+                        "--no-good-fit-dir",
+                        str(no_good_fit_dir),
+                        "--prompt-file",
+                        str(prompt_file),
+                        "--env-file",
+                        str(env_file),
+                    ],
+                    client=FakeClassifier(FitDecision("good_fit", 93, "Worth reviewing")),
+                )
 
             self.assertEqual(exit_code, 0)
             self.assertTrue((good_fit_dir / "a.json").exists())
@@ -160,24 +201,323 @@ class JobFitClassifierTests(unittest.TestCase):
             )
 
             classifier = FakeClassifier(FitDecision("good_fit", 93, "Worth reviewing"))
-            exit_code = main(
-                [
-                    "--source-dir",
-                    str(source_dir),
-                    "--good-fit-dir",
-                    str(good_fit_dir),
-                    "--no-good-fit-dir",
-                    str(no_good_fit_dir),
-                    "--prompt-file",
-                    str(prompt_file),
-                    "--env-file",
-                    str(env_file),
-                ],
-                client=classifier,
-            )
+            with temporary_cwd(root):
+                exit_code = main(
+                    [
+                        "--source-dir",
+                        str(source_dir),
+                        "--good-fit-dir",
+                        str(good_fit_dir),
+                        "--no-good-fit-dir",
+                        str(no_good_fit_dir),
+                        "--prompt-file",
+                        str(prompt_file),
+                        "--env-file",
+                        str(env_file),
+                    ],
+                    client=classifier,
+                )
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(classifier.calls[0][2], "deepseek-v4-pro")
+
+    def test_main_creates_default_persistent_log_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "01-source-jobs"
+            good_fit_dir = root / "02-good-fit"
+            no_good_fit_dir = root / "03-no-good-fit"
+            prompt_file = root / "prompt.txt"
+            env_file = root / "deepseek.env"
+
+            source_dir.mkdir()
+            good_fit_dir.mkdir()
+            no_good_fit_dir.mkdir()
+            prompt_file.write_text("Return json.", encoding="utf-8")
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            (source_dir / "job.json").write_text(
+                '{"title":"A","company":"Acme","location":"Remote","description":"Desc A"}',
+                encoding="utf-8",
+            )
+
+            with temporary_cwd(root):
+                exit_code = main(
+                    [
+                        "--source-dir",
+                        str(source_dir),
+                        "--good-fit-dir",
+                        str(good_fit_dir),
+                        "--no-good-fit-dir",
+                        str(no_good_fit_dir),
+                        "--prompt-file",
+                        str(prompt_file),
+                        "--env-file",
+                        str(env_file),
+                    ],
+                    client=FakeClassifier(FitDecision("good_fit", 93, "Worth reviewing")),
+                )
+
+            self.assertEqual(exit_code, 0)
+            log_dir = root / "logs" / "job-classifier"
+            log_files = list(log_dir.glob("*.log"))
+            self.assertEqual(len(log_files), 1)
+            log_text = log_files[0].read_text(encoding="utf-8")
+            self.assertIn("Processed=1 good_fit=1 no_good_fit=0 errors=0", log_text)
+
+    def test_collect_job_urls_includes_apply_and_all_hiring_team_links(self) -> None:
+        urls = collect_job_urls(
+            {
+                "applyUrl": "https://example.com/apply",
+                "hiringTeam": [
+                    {"linkedinUrl": "https://linkedin.com/in/first"},
+                    {"linkedinUrl": "https://linkedin.com/in/second"},
+                ],
+            }
+        )
+
+        self.assertEqual(
+            urls,
+            [
+                "https://example.com/apply",
+                "https://linkedin.com/in/first",
+                "https://linkedin.com/in/second",
+            ],
+        )
+
+    def test_open_job_file_opens_urls_and_moves_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "02-good-fit"
+            destination_dir = root / "04-opened-or-applied"
+            source_dir.mkdir()
+
+            job_path = source_dir / "job.json"
+            job_path.write_text(
+                json.dumps(
+                    {
+                        "applyUrl": "https://example.com/apply",
+                        "hiringTeam": [
+                            {"linkedinUrl": "https://linkedin.com/in/first"},
+                            {"linkedinUrl": "https://linkedin.com/in/second"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            opened: list[str] = []
+            destination = open_job_file(
+                job_path,
+                destination_dir,
+                opener=lambda url: opened.append(url) or True,
+            )
+
+            self.assertEqual(
+                opened,
+                [
+                    "https://example.com/apply",
+                    "https://linkedin.com/in/first",
+                    "https://linkedin.com/in/second",
+                ],
+            )
+            self.assertEqual(destination, destination_dir / "job.json")
+            self.assertFalse(job_path.exists())
+            self.assertTrue(destination.exists())
+
+    def test_open_jobs_main_respects_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "02-good-fit"
+            destination_dir = root / "04-opened-or-applied"
+            source_dir.mkdir()
+
+            (source_dir / "b.json").write_text(
+                json.dumps({"applyUrl": "https://example.com/b"}),
+                encoding="utf-8",
+            )
+            (source_dir / "a.json").write_text(
+                json.dumps({"applyUrl": "https://example.com/a"}),
+                encoding="utf-8",
+            )
+
+            opened: list[str] = []
+            with temporary_cwd(root):
+                exit_code = open_jobs_main(
+                    [
+                        "--limit",
+                        "1",
+                        "--source-dir",
+                        str(source_dir),
+                        "--destination-dir",
+                        str(destination_dir),
+                    ],
+                    opener=lambda url: opened.append(url) or True,
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(opened, ["https://example.com/a"])
+            self.assertTrue((destination_dir / "a.json").exists())
+            self.assertTrue((source_dir / "b.json").exists())
+
+    def test_main_uses_explicit_log_file_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "01-source-jobs"
+            good_fit_dir = root / "02-good-fit"
+            no_good_fit_dir = root / "03-no-good-fit"
+            prompt_file = root / "prompt.txt"
+            env_file = root / "deepseek.env"
+            explicit_log_file = root / "custom-logs" / "manual.log"
+
+            source_dir.mkdir()
+            good_fit_dir.mkdir()
+            no_good_fit_dir.mkdir()
+            prompt_file.write_text("Return json.", encoding="utf-8")
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            (source_dir / "job.json").write_text(
+                '{"title":"A","company":"Acme","location":"Remote","description":"Desc A"}',
+                encoding="utf-8",
+            )
+
+            with temporary_cwd(root):
+                exit_code = main(
+                    [
+                        "--source-dir",
+                        str(source_dir),
+                        "--good-fit-dir",
+                        str(good_fit_dir),
+                        "--no-good-fit-dir",
+                        str(no_good_fit_dir),
+                        "--prompt-file",
+                        str(prompt_file),
+                        "--env-file",
+                        str(env_file),
+                        "--log-file",
+                        str(explicit_log_file),
+                    ],
+                    client=FakeClassifier(FitDecision("good_fit", 93, "Worth reviewing")),
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(explicit_log_file.exists())
+            log_text = explicit_log_file.read_text(encoding="utf-8")
+            self.assertIn("Processed=1 good_fit=1 no_good_fit=0 errors=0", log_text)
+
+    def test_deepseek_client_logs_request_and_raw_response_to_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_file = root / "logs" / "classifier.log"
+            configure_logging("INFO", log_file=log_file)
+            response_body = (
+                '{"choices":[{"message":{"content":"{\\"decision\\":\\"good_fit\\",'
+                '\\"score\\":88,\\"reason\\":\\"Strong match\\"}"}}]}'
+            )
+
+            class FakeHTTPResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return None
+
+                def read(self) -> bytes:
+                    return response_body.encode("utf-8")
+
+            with mock.patch.object(request, "urlopen", return_value=FakeHTTPResponse()):
+                client = DeepSeekClient(api_key="test-key")
+                result = client.classify(
+                    system_prompt="Return strict JSON.",
+                    user_message="Title: Product Manager",
+                    model="deepseek-v4-flash",
+                )
+
+            self.assertEqual(result.decision, "good_fit")
+            log_text = log_file.read_text(encoding="utf-8")
+            self.assertIn("LLM request payload:", log_text)
+            self.assertIn('"content": "Return strict JSON."', log_text)
+            self.assertIn('"content": "Title: Product Manager"', log_text)
+            self.assertIn("LLM raw response:", log_text)
+            self.assertIn('\\"decision\\":\\"good_fit\\"', log_text)
+
+    def test_deepseek_client_uses_800_max_tokens(self) -> None:
+        captured_request: request.Request | None = None
+        response_body = (
+            '{"choices":[{"message":{"content":"{\\"decision\\":\\"good_fit\\",'
+            '\\"score\\":88,\\"reason\\":\\"Strong match\\"}"}}]}'
+        )
+
+        class FakeHTTPResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return None
+
+            def read(self) -> bytes:
+                return response_body.encode("utf-8")
+
+        def fake_urlopen(http_request: request.Request, timeout: int):
+            nonlocal captured_request
+            captured_request = http_request
+            return FakeHTTPResponse()
+
+        with mock.patch.object(request, "urlopen", side_effect=fake_urlopen):
+            client = DeepSeekClient(api_key="test-key")
+            result = client.classify(
+                system_prompt="Return strict JSON.",
+                user_message="Title: Product Manager",
+                model="deepseek-v4-flash",
+            )
+
+        self.assertEqual(result.decision, "good_fit")
+        self.assertIsNotNone(captured_request)
+        request_payload = json.loads(captured_request.data.decode("utf-8"))
+        self.assertEqual(request_payload["max_tokens"], 800)
+
+    def test_run_batch_writes_failure_artifact_for_model_response_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "01-source-jobs"
+            good_fit_dir = root / "02-good-fit"
+            no_good_fit_dir = root / "03-no-good-fit"
+            error_artifact_dir = root / ".job-classifier-errors"
+            source_dir.mkdir()
+            raw_response = '{"decision":"good_fit","score":88,"reason":"Missing quote}'
+            (source_dir / "job.json").write_text(
+                '{"title":"Product Manager","company":"Acme","location":"Remote","description":"Own roadmap"}',
+                encoding="utf-8",
+            )
+
+            logger = logging.getLogger("jobs_pipeline.tests")
+
+            with self.assertLogs(logger, level="ERROR") as captured:
+                result = run_batch(
+                    source_dir=source_dir,
+                    good_fit_dir=good_fit_dir,
+                    no_good_fit_dir=no_good_fit_dir,
+                    system_prompt="Return json.",
+                    client=RaisingClassifier(
+                        ModelResponseError(
+                            "Malformed model response JSON",
+                            raw_response=raw_response,
+                        )
+                    ),
+                    model="deepseek-v4-flash",
+                    error_artifact_dir=error_artifact_dir,
+                    logger=logger,
+                )
+
+            self.assertEqual(result, (0, 0, 0, 1))
+            artifacts = list(error_artifact_dir.glob("*.json"))
+            self.assertEqual(len(artifacts), 1)
+            artifact = json.loads(artifacts[0].read_text(encoding="utf-8"))
+            self.assertEqual(artifact["jobFile"], "job.json")
+            self.assertEqual(artifact["model"], "deepseek-v4-flash")
+            self.assertEqual(artifact["errorType"], "ModelResponseError")
+            self.assertEqual(artifact["rawResponse"], raw_response)
+            self.assertEqual(artifact["systemPrompt"], "Return json.")
+            self.assertIn("Title: Product Manager", artifact["userMessage"])
+            self.assertIn("Saved failure artifact", "\n".join(captured.output))
 
     def test_script_wrapper_can_render_help(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]

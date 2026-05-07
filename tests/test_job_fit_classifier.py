@@ -317,6 +317,57 @@ class JobFitClassifierTests(unittest.TestCase):
             self.assertTrue((duplicates_dir / "Acme_Product-Manager_222.json").exists())
             self.assertTrue((no_good_fit_dir / "Acme_Product-Manager_111.json").exists())
 
+    def test_main_logs_duplicate_count_in_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "01-source-jobs"
+            good_fit_dir = root / "02-good-fit"
+            no_good_fit_dir = root / "03-no-good-fit"
+            opened_or_applied_dir = root / "04-opened-or-applied"
+            prompt_file = root / "prompt.txt"
+            env_file = root / "deepseek.env"
+            log_file = root / "classifier.log"
+
+            source_dir.mkdir()
+            good_fit_dir.mkdir()
+            no_good_fit_dir.mkdir()
+            opened_or_applied_dir.mkdir()
+            prompt_file.write_text("Return json.", encoding="utf-8")
+            env_file.write_text("DEEPSEEK_API_KEY=test-key\n", encoding="utf-8")
+            (opened_or_applied_dir / "Acme_Product-Manager_111.json").write_text(
+                "{}",
+                encoding="utf-8",
+            )
+            (source_dir / "Acme_Product-Manager_222.json").write_text(
+                '{"title":"Product Manager","company":"Acme","location":"Remote","description":"Desc"}',
+                encoding="utf-8",
+            )
+
+            with temporary_cwd(root):
+                exit_code = main(
+                    [
+                        "--source-dir",
+                        str(source_dir),
+                        "--good-fit-dir",
+                        str(good_fit_dir),
+                        "--no-good-fit-dir",
+                        str(no_good_fit_dir),
+                        "--opened-or-applied-dir",
+                        str(opened_or_applied_dir),
+                        "--prompt-file",
+                        str(prompt_file),
+                        "--env-file",
+                        str(env_file),
+                        "--log-file",
+                        str(log_file),
+                    ],
+                    client=RaisingClassifier(AssertionError("LLM should not be called")),
+                )
+
+            self.assertEqual(exit_code, 0)
+            log_text = log_file.read_text(encoding="utf-8")
+            self.assertIn("Processed=1 good_fit=0 no_good_fit=0 duplicates=1 errors=0", log_text)
+
     def test_main_creates_default_persistent_log_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -358,7 +409,7 @@ class JobFitClassifierTests(unittest.TestCase):
             log_files = list(log_dir.glob("*.log"))
             self.assertEqual(len(log_files), 1)
             log_text = log_files[0].read_text(encoding="utf-8")
-            self.assertIn("Processed=1 good_fit=1 no_good_fit=0 errors=0", log_text)
+            self.assertIn("Processed=1 good_fit=1 no_good_fit=0 duplicates=0 errors=0", log_text)
 
     def test_collect_job_urls_includes_apply_and_all_hiring_team_links(self) -> None:
         urls = collect_job_urls(
@@ -497,7 +548,7 @@ class JobFitClassifierTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertTrue(explicit_log_file.exists())
             log_text = explicit_log_file.read_text(encoding="utf-8")
-            self.assertIn("Processed=1 good_fit=1 no_good_fit=0 errors=0", log_text)
+            self.assertIn("Processed=1 good_fit=1 no_good_fit=0 duplicates=0 errors=0", log_text)
 
     def test_deepseek_client_logs_request_and_raw_response_to_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -603,7 +654,7 @@ class JobFitClassifierTests(unittest.TestCase):
                     logger=logger,
                 )
 
-            self.assertEqual(result, (0, 0, 0, 1))
+            self.assertEqual(result, (0, 0, 0, 0, 1))
             artifacts = list(error_artifact_dir.glob("*.json"))
             self.assertEqual(len(artifacts), 1)
             artifact = json.loads(artifacts[0].read_text(encoding="utf-8"))

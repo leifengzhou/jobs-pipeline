@@ -386,11 +386,12 @@ def run_batch(
     limit: int | None = None,
     error_artifact_dir: Path | None = DEFAULT_ERROR_ARTIFACT_DIR,
     logger: logging.Logger | None = None,
-) -> tuple[int, int, int, int]:
+) -> tuple[int, int, int, int, int]:
     batch_logger = logger or logging.getLogger(LOGGER_NAME)
     processed = 0
     good_fit = 0
     no_good_fit = 0
+    duplicates = 0
     errors = 0
     duplicate_company_role_keys = collect_duplicate_company_role_keys(
         opened_or_applied_dir,
@@ -401,6 +402,7 @@ def run_batch(
         if derive_company_role_key(job_path) in duplicate_company_role_keys:
             destination = move_duplicate_job_file(job_path, duplicates_dir)
             processed += 1
+            duplicates += 1
             batch_logger.info(
                 "%s -> %s (duplicate company+role match in %s or %s)",
                 job_path.name,
@@ -453,7 +455,7 @@ def run_batch(
             no_good_fit += 1
         batch_logger.info("%s -> %s", job_path.name, destination.parent.name)
 
-    return processed, good_fit, no_good_fit, errors
+    return processed, good_fit, no_good_fit, duplicates, errors
 
 
 def run_open_batch(
@@ -526,7 +528,7 @@ def main(argv: Sequence[str] | None = None, client: ClassifierClient | None = No
     model = args.model or env_values.get("DEEPSEEK_MODEL", DEFAULT_MODEL)
     api_url = args.api_url or env_values.get("DEEPSEEK_API_URL", DEFAULT_API_URL)
     batch_client = client or DeepSeekClient(api_key=api_key, api_url=api_url)
-    processed, good_fit, no_good_fit, errors = run_batch(
+    processed, good_fit, no_good_fit, duplicates, errors = run_batch(
         source_dir=Path(args.source_dir),
         good_fit_dir=Path(args.good_fit_dir),
         no_good_fit_dir=Path(args.no_good_fit_dir),
@@ -540,10 +542,11 @@ def main(argv: Sequence[str] | None = None, client: ClassifierClient | None = No
         logger=logger,
     )
     logger.info(
-        "Processed=%s good_fit=%s no_good_fit=%s errors=%s",
+        "Processed=%s good_fit=%s no_good_fit=%s duplicates=%s errors=%s",
         processed,
         good_fit,
         no_good_fit,
+        duplicates,
         errors,
     )
     return 0
